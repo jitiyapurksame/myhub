@@ -37,6 +37,20 @@ textarea{min-height:110px}
 .note h3{margin:0 0 2px;font-size:15px;font-weight:600}
 .note p{margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .note time{color:var(--mut);font-size:12px}
+.note.c{background:var(--c);border-color:transparent;color:#3d4047}
+.note.c time{color:#3d4047;opacity:.6}
+.note.c .btn{background:rgba(255,255,255,.65);border-color:transparent;color:#3d4047}
+.meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:12px;opacity:.8}
+.bar{display:flex;gap:8px;margin-bottom:10px}
+.bar select{width:auto;flex:none}
+.fold{display:flex;align-items:center;gap:10px;border:1px solid var(--bd);background:var(--card);border-radius:16px;padding:12px 14px;margin-bottom:10px;cursor:pointer;user-select:none}
+.fold b{font-weight:600;flex:1;overflow-wrap:anywhere}
+.fold .n{color:var(--mut);font-size:12px}
+.fold .chev{display:inline-block;transition:transform .15s;color:var(--mut)}
+.fold.open .chev{transform:rotate(90deg)}
+.fold .ed{position:static}
+.fbody{margin:0 0 8px 8px;padding-left:10px;border-left:2px solid var(--bd)}
 .imgs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .imgs img{width:96px;height:96px;object-fit:cover;border-radius:12px;cursor:zoom-in}
 .ov{position:fixed;inset:0;background:rgba(40,42,50,.4);display:none;align-items:flex-end;justify-content:center;z-index:9}
@@ -67,7 +81,19 @@ textarea{min-height:110px}
     <div class="chips" id="chips"></div>
     <div id="list"></div>
   </div>
-  <div id="v-notes" style="display:none"><div id="nlist"></div></div>
+  <div id="v-notes" style="display:none">
+    <div class="bar">
+      <input id="nq" placeholder="Search notes..." style="flex:1">
+      <select id="nsort" aria-label="Sort notes">
+        <option value="new">Newest</option>
+        <option value="old">Oldest</option>
+        <option value="az">A → Z</option>
+        <option value="za">Z → A</option>
+      </select>
+    </div>
+    <div class="chips" id="nchips"></div>
+    <div id="nlist"></div>
+  </div>
   <div style="text-align:center"><button class="btn" id="out" style="font-size:12px;padding:4px 12px;color:var(--mut)">Sign out</button></div>
   <div id="warn" class="msg" style="display:none">Could not connect. Check the Supabase URL and key in index.html.</div>
 </div>
@@ -90,6 +116,9 @@ textarea{min-height:110px}
 <div class="ov" id="ovN"><div class="box">
   <h2 id="nt" style="margin:0;font-size:18px">New note</h2>
   <label>Title</label><input id="nn">
+  <label>Category</label><select id="ncat"></select>
+  <label>Folder (collapsed by default in the list)</label><select id="nfold"></select>
+  <input id="nfnew" placeholder="New folder name" maxlength="40" style="display:none;margin-top:6px">
   <label>Text</label><textarea id="nx"></textarea>
   <label>Attach images</label>
   <input type="file" id="nf" accept="image/*" multiple>
@@ -130,8 +159,16 @@ const OLD={"📊":"chart","📈":"trend","⚖":"scale","🏛":"bank","📑":"doc
 const ik=v=>IC[v]?v:(OLD[(v||"").replace(/\uFE0F/g,"")]||"link");
 const svg=v=>{const k=ik(v),s=document.createElement("span");s.innerHTML='<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="'+IC[k]+'"/></svg>';return s};
 const $=id=>document.getElementById(id);
+const svg_p=p=>{const s=document.createElement("span");s.style.cssText="display:inline-flex;color:var(--mut)";s.innerHTML='<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="'+p+'"/></svg>';return s};
 const E=(t,p={},...k)=>{const e=document.createElement(t);for(const a in p){if(a==="text")e.textContent=p[a];else if(a.startsWith("on"))e[a]=p[a];else e.setAttribute(a,p[a])}k.forEach(c=>e.append(c));return e};
 let db=null,assets=null,links=[],notes=[],fcat="",editL=null,editN=null,selIcon=KEYS[0],pics=[];
+let ncat="",nsort=(()=>{try{return localStorage.getItem("hubNSort")||"new"}catch(e){return"new"}})();
+const openF=new Set();
+const FOLDER_IC="M3 6h6l2 2h10v11H3z";
+const col=new Intl.Collator(["th","en"],{numeric:true,sensitivity:"base"});
+const nkey=n=>(n.title||n.text||"").trim();
+const SORTS={new:(a,b)=>(b.ts||0)-(a.ts||0),old:(a,b)=>(a.ts||0)-(b.ts||0),az:(a,b)=>col.compare(nkey(a),nkey(b)),za:(a,b)=>col.compare(nkey(b),nkey(a))};
+if(!SORTS[nsort])nsort="new";
 const cat=k=>CATS.find(c=>c[0]===k)||CATS[1];
 const safeUrl=u=>{u=(u||"").trim();if(!u)return"";if(!/^https?:\/\//i.test(u))u="https://"+u;try{return new URL(u).href}catch(e){return""}};
 
@@ -157,14 +194,52 @@ function drawLinks(){
         E("button",{class:"ed",text:"✎","aria-label":"Edit",onclick:ev=>{ev.preventDefault();ev.stopPropagation();openL(x)}})))});
     L.append(gr)});
 }
+function drawNChips(){
+  const c=$("nchips");c.replaceChildren();
+  [["","All","#ebe9e4"],...CATS.map(x=>[x[0],x[1],x[2]]),["-","No category","#ebe9e4"]].forEach(([k,n,bg])=>{
+    const b=E("button",{class:"chip"+(ncat===k?" on":""),text:n,onclick:()=>{ncat=k;drawNChips();drawNotes()}});
+    if(ncat===k)b.style.background=bg;
+    c.append(b)});
+}
+const folderNames=()=>[...new Set(notes.map(n=>n.folder).filter(Boolean))].sort(col.compare);
+function noteCard(n){
+  const c=CATS.find(x=>x[0]===n.cat);
+  const d=E("div",{class:"note"+(c?" c":"")});
+  if(c)d.style.setProperty("--c",c[2]);
+  const meta=E("div",{class:"meta"},E("time",{text:new Date(n.ts).toLocaleString("en-GB")}));
+  if(c)meta.append(E("span",{class:"tag"},E("span",{class:"dot",style:"background:"+c[3]}),E("span",{text:c[1]})));
+  d.append(E("h3",{text:n.title||"(Untitled)"}),meta,E("p",{text:n.text||""}));
+  if((n.imgs||[]).length){const im=E("div",{class:"imgs"});n.imgs.forEach(i=>im.append(pic(i,true)));d.append(im)}
+  d.append(E("button",{class:"btn",text:"Edit",style:"margin-top:8px;padding:4px 14px;font-size:13px",onclick:()=>openN(n)}));
+  return d;
+}
+function renameFolder(f){err(async()=>{
+  const v=(prompt("Rename folder",f)||"").trim();
+  if(!v||v===f)return;
+  for(const n of notes.filter(x=>x.folder===f)){const {id,...d}=n;await db.collection("notes").doc(id).set({...d,folder:v})}
+  if(openF.delete(f))openF.add(v);
+  drawNotes();
+})}
 function drawNotes(){
   const L=$("nlist");L.replaceChildren();
   if(!notes.length){L.append(E("div",{class:"msg",text:"No notes yet. Tap + Add to write a note or attach images."}));return}
-  notes.forEach(n=>{
-    const d=E("div",{class:"note"},E("h3",{text:n.title||"(Untitled)"}),E("time",{text:new Date(n.ts).toLocaleString("en-GB")}),E("p",{text:n.text||""}));
-    if((n.imgs||[]).length){const im=E("div",{class:"imgs"});n.imgs.forEach(i=>im.append(pic(i,true)));d.append(im)}
-    d.append(E("button",{class:"btn",text:"Edit",style:"margin-top:8px;padding:4px 14px;font-size:13px",onclick:()=>openN(n)}));
-    L.append(d)});
+  const q=$("nq").value.trim().toLowerCase(),filtering=!!(q||ncat);
+  const rows=notes.filter(n=>
+    (!ncat||(ncat==="-"?!CATS.some(x=>x[0]===n.cat):n.cat===ncat))&&
+    (!q||((n.title||"")+" "+(n.text||"")+" "+(n.folder||"")).toLowerCase().includes(q))
+  ).sort(SORTS[nsort]);
+  if(!rows.length){L.append(E("div",{class:"msg",text:"Nothing found"}));return}
+  folderNames().forEach(f=>{
+    const g=rows.filter(n=>n.folder===f);
+    if(filtering&&!g.length)return;
+    const open=openF.has(f)||(!!q&&g.length>0);
+    const h=E("div",{class:"fold"+(open?" open":""),role:"button",tabindex:"0",onclick:()=>{openF.has(f)?openF.delete(f):openF.add(f);drawNotes()}},
+      E("span",{class:"chev",text:"▸"}),svg_p(FOLDER_IC),E("b",{text:f}),E("span",{class:"n",text:String(g.length)}),
+      E("button",{class:"ed",text:"✎","aria-label":"Rename folder",onclick:ev=>{ev.stopPropagation();renameFolder(f)}}));
+    L.append(h);
+    if(open){const b=E("div",{class:"fbody"});g.forEach(n=>b.append(noteCard(n)));L.append(b)}
+  });
+  rows.filter(n=>!n.folder).forEach(n=>L.append(noteCard(n)));
 }
 function setTab(t){
   $("v-apps").style.display=t==="a"?"":"none";$("v-notes").style.display=t==="n"?"":"none";
@@ -181,6 +256,10 @@ function drawIcons(){const b=$("li");b.replaceChildren();KEYS.forEach(k=>b.appen
 function openN(n){
   editN=n;$("nt").textContent=n?"Edit note":"New note";
   $("nn").value=n?.title||"";$("nx").value=n?.text||"";$("nf").value="";pics=[...(n?.imgs||[])];drawPics();
+  $("ncat").replaceChildren(E("option",{value:"",text:"No category"}),...CATS.map(c=>E("option",{value:c[0],text:c[1]})));
+  $("ncat").value=n?(n.cat||""):(ncat&&ncat!=="-"?ncat:"");
+  $("nfold").replaceChildren(E("option",{value:"",text:"No folder"}),...folderNames().map(f=>E("option",{value:f,text:f})),E("option",{value:"__new",text:"+ New folder..."}));
+  $("nfold").value=n?.folder||"";$("nfnew").value="";$("nfnew").style.display="none";
   $("ndel").style.display=n?"":"none";$("ovN").classList.add("show");
 }
 function drawPics(){
@@ -207,7 +286,8 @@ $("nf").onchange=()=>err(async()=>{
 });
 $("ns").onclick=()=>err(async()=>{
   if(!db)return;
-  const d={title:$("nn").value.trim(),text:$("nx").value,imgs:pics,ts:editN?.ts||Date.now()};
+  let folder=$("nfold").value;if(folder==="__new")folder=$("nfnew").value.trim();
+  const d={title:$("nn").value.trim(),text:$("nx").value,imgs:pics,cat:$("ncat").value,folder,ts:editN?.ts||Date.now()};
   if(!d.title&&!d.text&&!pics.length)return;
   await (editN?db.collection("notes").doc(editN.id).set(d):db.collection("notes").add(d));
   $("ovN").classList.remove("show");
@@ -216,6 +296,10 @@ $("ndel").onclick=()=>err(async()=>{if(editN&&confirm("Delete this note?")){awai
 $("nc").onclick=()=>$("ovN").classList.remove("show");
 $("ovI").onclick=()=>$("ovI").classList.remove("show");
 $("q").oninput=drawLinks;
+$("nq").oninput=drawNotes;
+$("nsort").value=nsort;
+$("nsort").onchange=()=>{nsort=$("nsort").value;try{localStorage.setItem("hubNSort",nsort)}catch(e){}drawNotes()};
+$("nfold").onchange=()=>{const x=$("nfold").value==="__new";$("nfnew").style.display=x?"":"none";if(x)$("nfnew").focus()};
 $("t-apps").onclick=()=>setTab("a");$("t-notes").onclick=()=>setTab("n");
 
 let prof=null,asked=false;
@@ -225,7 +309,7 @@ $("ren").onclick=openName;
 $("ps").onclick=()=>err(async()=>{if(!db)return;await db.doc("settings/profile").set({name:$("pn").value.trim()});$("ovP").classList.remove("show")});
 $("pk").onclick=()=>err(async()=>{if(db&&!prof)await db.doc("settings/profile").set({name:"",skipped:true});$("ovP").classList.remove("show")});
 $("lc").append(...CATS.map(c=>E("option",{value:c[0],text:c[1]})));
-drawChips();drawLinks();drawNotes();setTab("a");
+drawChips();drawLinks();drawNChips();drawNotes();setTab("a");
 
 /* ===== Supabase config: replace both values ===== */
 const SUPABASE_URL="https://mbyubvpomeobsfwlfhoa.supabase.co",SUPABASE_KEY="sb_publishable_L6TvanB53XGbKXPPC_75LQ_F2xD08Zq";
