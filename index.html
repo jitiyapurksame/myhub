@@ -50,6 +50,11 @@ textarea{min-height:110px}
 .fold .chev{display:inline-block;transition:transform .15s;color:var(--mut)}
 .fold.open .chev{transform:rotate(90deg)}
 .fold .ed{position:static}
+.fold.c{background:var(--c);border-color:transparent;color:#3d4047}
+.fold.c span{color:#3d4047!important}
+.fold.c .n,.fold.c .chev{opacity:.6}
+.fold.c .ed{color:#3d4047}
+.dots{display:flex;gap:4px;align-items:center}
 .fbody{margin:0 0 8px 8px;padding-left:10px;border-left:2px solid var(--bd)}
 .imgs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .imgs img{width:96px;height:96px;object-fit:cover;border-radius:12px;cursor:zoom-in}
@@ -233,11 +238,17 @@ function drawNotes(){
     const g=rows.filter(n=>n.folder===f);
     if(filtering&&!g.length)return;
     const open=openF.has(f)||(!!q&&g.length>0);
-    const h=E("div",{class:"fold"+(open?" open":""),role:"button",tabindex:"0",onclick:()=>{openF.has(f)?openF.delete(f):openF.add(f);drawNotes()}},
-      E("span",{class:"chev",text:"▸"}),svg_p(FOLDER_IC),E("b",{text:f}),E("span",{class:"n",text:String(g.length)}),
+    const present=[...new Set(notes.filter(n=>n.folder===f).map(n=>n.cat))];
+    const known=CATS.filter(c=>present.includes(c[0]));
+    const solo=present.length===1&&known.length===1?known[0]:null;
+    const dots=E("span",{class:"dots"});
+    if(!solo)known.forEach(c=>dots.append(E("span",{class:"dot",title:c[1],style:"background:"+c[3]})));
+    const h=E("div",{class:"fold"+(open?" open":"")+(solo?" c":""),role:"button",tabindex:"0",onclick:()=>{openF.has(f)?openF.delete(f):openF.add(f);drawNotes()}},
+      E("span",{class:"chev",text:"▸"}),svg_p(FOLDER_IC),E("b",{text:f}),dots,E("span",{class:"n",text:String(g.length)}),
       E("button",{class:"ed",text:"✎","aria-label":"Rename folder",onclick:ev=>{ev.stopPropagation();renameFolder(f)}}));
+    if(solo)h.style.setProperty("--c",solo[2]);
     L.append(h);
-    if(open){const b=E("div",{class:"fbody"});g.forEach(n=>b.append(noteCard(n)));L.append(b)}
+    if(open){const b=E("div",{class:"fbody"});if(solo)b.style.borderLeftColor=solo[3];g.forEach(n=>b.append(noteCard(n)));L.append(b)}
   });
   rows.filter(n=>!n.folder).forEach(n=>L.append(noteCard(n)));
 }
