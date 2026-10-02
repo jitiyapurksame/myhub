@@ -167,7 +167,12 @@ const EMO=[
 ["Animals","🐶🐱🐭🐰🦊🐻🐼🐨🐯🦁🐮🐷🐸🐵🐔🐧🐤🦆🦉🦄🐴🐢🐍🐙🦀🐠🐬🐳🦈🐝🦋🐞🐘🦒🐊🦖🐑🐺".match(/\p{Extended_Pictographic}/gu)],
 ["Faces","😀😄😊😍🥰😎🤩😴🤔😢😭😡🥳😜🤗😱😇🤓🤖👻".match(/\p{Extended_Pictographic}/gu)],
 ["Vehicles","🚗🚕🚌🚓🚑🚒🚜🚲🛵🚂🚆🚁🚀🛸🚛🚧".match(/\p{Extended_Pictographic}/gu)],
-["Sailing","⛵🚤🛶🚢⚓🌊🐚🧭🦜🚣🔱🌴🦭🧜".match(/\p{Extended_Pictographic}/gu)]
+["Sailing","⛵🚤🛶🚢⚓🌊🐚🧭🦜🚣🔱🌴🦭🧜".match(/\p{Extended_Pictographic}/gu)],
+["School","🏫🎓🎒📏📐🧪🧩🔢🔤📓📕📗📘📙🏆🥇🔔💡🧲🎯".match(/\p{Extended_Pictographic}/gu)],
+["Stars & Space","🌟💫✨🌙🌛🌞🌍🌎🪐🌠🌌🔭👽👾🌑🌕🌈⚡🌃".match(/\p{Extended_Pictographic}/gu)],
+["Food","🍕🍔🍟🌭🍿🍩🍪🎂🍰🧁🍫🍬🍭🍦🍧🍉🍌🍇🍓🍒🍑🍍🥭🥝🍊🍋🥕🌽🥦🍞🧀🍳🥞🍜🍣🍙🍚🍱🥟🍤🥤🧋☕🍼".match(/\p{Extended_Pictographic}/gu)],
+["Music","🎶🎤🎧🎸🎹🥁🎺🎷🎻📻🎼🎭".match(/\p{Extended_Pictographic}/gu)],
+["Nature","🌳🌲🌵🌱🌿🍀🍁🍂🌸🌹🌺🌻🌼🌷🍄🌾💐🌋🌄🌅🔥💧⛄☔🐾".match(/\p{Extended_Pictographic}/gu)]
 ];
 const EMOALL=EMO.flatMap(g=>g[1]);
 const ik=v=>{v=(v||"").replace(/\uFE0F/g,"");return IC[v]?v:(OLD[v]||(EMOALL.includes(v)?v:"link"))};
