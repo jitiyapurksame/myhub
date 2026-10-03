@@ -71,6 +71,9 @@ textarea{min-height:110px}
 .thumb{position:relative;display:inline-block}
 .thumb button{position:absolute;top:-6px;right:-6px;border-radius:50%;border:0;background:#e88f8f;color:#fff;width:22px;height:22px;cursor:pointer}
 .del{color:#d97777}
+.pin{text-align:center;font-size:22px;letter-spacing:8px;margin-top:10px}
+.chip.k.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.lnk{border:0;background:none;color:var(--mut);font:inherit;font-size:13px;text-decoration:underline;cursor:pointer;padding:6px 0}
 #big{max-width:96%;max-height:90%;border-radius:12px}
 </style>
 </head>
@@ -155,6 +158,8 @@ textarea{min-height:110px}
   <div class="row" style="margin-top:14px"><button class="btn pri" id="ain">Sign in</button></div>
 </div></div>
 
+<div class="ov" id="ovK" style="align-items:center"><div class="box" style="border-radius:24px;margin:14px"><h2 id="kt" style="margin:0;font-size:18px"></h2><div id="kb"></div></div></div>
+
 <div class="ov" id="ovI" style="align-items:center"><img id="big" alt=""></div>
 
 <script>
@@ -235,8 +240,13 @@ function noteCard(n){
   return d;
 }
 function renameFolder(f){err(async()=>{
+  if(isLocked(f)){alert("Unlock this folder first.");return}
   const v=(prompt("Rename folder",f)||"").trim();
   if(!v||v===f)return;
+  if(lockOf(v)){alert("A locked folder with that name already exists.");return}
+  const lk=lockOf(f);
+  if(lk){const L={...prof.locks};delete L[f];L[v]=lk;await saveLocks(L)}
+  if(unl.delete(f))unl.add(v);
   for(const n of notes.filter(x=>x.folder===f)){const {id,...d}=n;await db.collection("notes").doc(id).set({...d,folder:v})}
   if(openF.delete(f))openF.add(v);
   drawNotes();
@@ -247,20 +257,25 @@ function drawNotes(){
   const q=$("nq").value.trim().toLowerCase(),filtering=!!(q||ncat);
   const rows=notes.filter(n=>
     (!ncat||(ncat==="-"?!CATS.some(x=>x[0]===n.cat):n.cat===ncat))&&
-    (!q||((n.title||"")+" "+(n.text||"")+" "+(n.folder||"")).toLowerCase().includes(q))
+    (!q||(isLocked(n.folder)?(n.folder||""):((n.title||"")+" "+(n.text||"")+" "+(n.folder||""))).toLowerCase().includes(q))
   ).sort(SORTS[nsort]);
   if(!rows.length){L.append(E("div",{class:"msg",text:"Nothing found"}));return}
   folderNames().forEach(f=>{
     const g=rows.filter(n=>n.folder===f);
+    const locked=isLocked(f);
     if(filtering&&!g.length)return;
-    const open=openF.has(f)||(!!q&&g.length>0);
+    const open=!locked&&(openF.has(f)||(!!q&&g.length>0));
     const present=[...new Set(notes.filter(n=>n.folder===f).map(n=>n.cat))];
     const known=CATS.filter(c=>present.includes(c[0]));
     const solo=present.length===1&&known.length===1?known[0]:null;
     const dots=E("span",{class:"dots"});
     if(!solo)known.forEach(c=>dots.append(E("span",{class:"dot",title:c[1],style:"background:"+c[3]})));
-    const h=E("div",{class:"fold"+(open?" open":"")+(solo?" c":""),role:"button",tabindex:"0",onclick:()=>{openF.has(f)?openF.delete(f):openF.add(f);drawNotes()}},
-      E("span",{class:"chev",text:"▸"}),svg_p(FOLDER_IC),E("b",{text:f}),dots,E("span",{class:"n",text:String(g.length)}),
+    const h=E("div",{class:"fold"+(open?" open":"")+(solo?" c":""),role:"button",tabindex:"0",onclick:()=>{
+      if(locked){showLock(f,"unlock");$("ovK").classList.add("show");return}
+      if(openF.has(f)){openF.delete(f);unl.delete(f)}else openF.add(f);
+      drawNotes()}},
+      E("span",{class:"chev",text:"▸"}),svg_p(locked?LOCK_IC:FOLDER_IC),E("b",{text:f}),dots,E("span",{class:"n",text:String(g.length)}),
+      E("button",{class:"ed",type:"button","aria-label":"Folder lock",onclick:ev=>{ev.stopPropagation();openLock(f)}},ico(lockOf(f)?LOCK_IC:OPEN_IC)),
       E("button",{class:"ed",text:"✎","aria-label":"Rename folder",onclick:ev=>{ev.stopPropagation();renameFolder(f)}}));
     if(solo)h.style.setProperty("--c",solo[2]);
     L.append(h);
@@ -268,6 +283,88 @@ function drawNotes(){
   });
   rows.filter(n=>!n.folder).forEach(n=>L.append(noteCard(n)));
 }
+/* ===== Folder lock (PIN 4 or 6 digits) ===== */
+const LOCK_IC="M6 11h12v9H6zM8 11V8a4 4 0 018 0v3",OPEN_IC="M6 11h12v9H6zM8 11V8a4 4 0 017.5-1.5";
+const ico=p=>{const s=document.createElement("span");s.style.cssText="display:inline-flex";s.innerHTML='<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="'+p+'"/></svg>';return s};
+const unl=new Set();let tries=0,until=0;
+const lockOf=f=>(f&&prof&&prof.locks&&prof.locks[f])||null;
+const isLocked=f=>!!lockOf(f)&&!unl.has(f);
+const b64=u=>btoa(String.fromCharCode(...u));
+const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function hashPin(pin,salt){
+  if(!(window.crypto&&crypto.subtle))throw new Error("PIN lock needs a secure (https) connection");
+  const k=await crypto.subtle.importKey("raw",new TextEncoder().encode(pin),"PBKDF2",false,["deriveBits"]);
+  return b64(new Uint8Array(await crypto.subtle.deriveBits({name:"PBKDF2",hash:"SHA-256",salt,iterations:150000},k,256)));
+}
+async function saveLocks(locks){
+  const d={...(prof||{}),locks};
+  if(!Object.keys(locks).length)delete d.locks;
+  await db.doc().set(d);
+  prof=d;
+}
+async function setLock(f,pin){
+  const salt=crypto.getRandomValues(new Uint8Array(16));
+  const lk={s:b64(salt),h:await hashPin(pin,salt),n:pin.length};
+  await saveLocks({...((prof&&prof.locks)||{}),[f]:lk});
+}
+async function checkPin(f,pin){
+  const l=lockOf(f);if(!l)return true;
+  if(Date.now()<until)throw new Error("Too many attempts. Try again in "+Math.ceil((until-Date.now())/1000)+"s");
+  if(await hashPin(pin,unb64(l.s))===l.h){tries=0;return true}
+  if(++tries>=5){tries=0;until=Date.now()+30000}
+  return false;
+}
+function openLock(f){showLock(f,lockOf(f)?(unl.has(f)?"manage":"unlock"):"set");$("ovK").classList.add("show")}
+function showLock(f,mode,n){
+  const l=lockOf(f),box=$("kb"),close=()=>$("ovK").classList.remove("show");
+  box.replaceChildren();
+  $("kt").textContent={set:l?"Change PIN":"Lock folder",unlock:"Unlock folder",manage:"Folder lock",forgot:"Remove lock"}[mode];
+  box.append(E("div",{text:f,style:"color:var(--mut);font-size:13px;margin:2px 0 6px;overflow-wrap:anywhere"}));
+  const msg=E("div",{style:"color:#d97777;font-size:13px;margin-top:8px;min-height:18px"});
+  const pin=(ph,len)=>{const i=E("input",{type:"password",inputmode:"numeric",pattern:"[0-9]*",autocomplete:"off",maxlength:String(len),placeholder:ph,class:"pin"});i.addEventListener("input",()=>{i.value=i.value.replace(/\D/g,"")});return i};
+  const btn=(t,fn,c)=>E("button",{type:"button",class:"btn "+(c||""),text:t,onclick:fn});
+  const run=fn=>async()=>{try{await fn()}catch(e){msg.textContent=(e&&e.message)||String(e)}};
+  const rowOf=(...k)=>E("div",{class:"row",style:"margin-top:14px"},...k);
+  let first=null;
+  if(mode==="set"){
+    const len=n||(l?l.n:4);
+    const seg=E("div",{class:"row",style:"margin-top:8px"},...[4,6].map(k=>E("button",{type:"button",class:"chip k"+(k===len?" on":""),text:k+" digits",onclick:()=>showLock(f,"set",k)})));
+    const p1=pin("New PIN",len),p2=pin("Confirm PIN",len);p2.style.marginTop="8px";first=p1;
+    box.append(seg,p1,p2,msg,rowOf(btn("Save",run(async()=>{
+      if(p1.value.length!==len){msg.textContent="Enter "+len+" digits";return}
+      if(p1.value!==p2.value){msg.textContent="PINs do not match";return}
+      await setLock(f,p1.value);unl.delete(f);openF.delete(f);close();drawNotes();
+    }),"pri"),btn("Cancel",close)));
+  }else if(mode==="unlock"){
+    const p=pin("PIN",l.n);first=p;
+    const go=run(async()=>{
+      if(p.value.length!==l.n)return;
+      if(await checkPin(f,p.value)){unl.add(f);openF.add(f);close();drawNotes()}
+      else{msg.textContent="Wrong PIN";p.value=""}
+    });
+    p.addEventListener("input",()=>{if(p.value.length===l.n)go()});
+    box.append(p,msg,rowOf(btn("Unlock",go,"pri"),btn("Cancel",close),E("span",{style:"flex:1"}),E("button",{type:"button",class:"lnk",text:"Forgot PIN?",onclick:()=>showLock(f,"forgot")})));
+  }else if(mode==="manage"){
+    box.append(msg,
+      rowOf(btn("Change PIN",()=>showLock(f,"set")),btn("Lock now",()=>{unl.delete(f);openF.delete(f);close();drawNotes()})),
+      rowOf(btn("Remove lock",run(async()=>{
+        if(!confirm("Remove the lock from \""+f+"\"?"))return;
+        const L={...prof.locks};delete L[f];await saveLocks(L);close();drawNotes();
+      }),"del"),E("span",{style:"flex:1"}),btn("Close",close)));
+  }else{
+    const pw=E("input",{type:"password",autocomplete:"current-password",placeholder:"Account password",style:"margin-top:10px"});first=pw;
+    box.append(E("div",{text:"Enter your account password to remove this lock.",style:"font-size:13px;color:var(--mut)"}),pw,msg,
+      rowOf(btn("Remove lock",run(async()=>{
+        const u=(await sb.auth.getUser()).data.user;
+        const r=await sb.auth.signInWithPassword({email:u.email,password:pw.value});
+        if(r.error){msg.textContent="Wrong password";return}
+        const L={...prof.locks};delete L[f];await saveLocks(L);unl.delete(f);close();drawNotes();
+      }),"pri"),btn("Back",()=>showLock(f,"unlock"))));
+  }
+  if(first)setTimeout(()=>first.focus(),50);
+}
+document.addEventListener("visibilitychange",()=>{if(document.hidden&&unl.size){unl.clear();drawNotes()}});
+
 function setTab(t){
   $("v-apps").style.display=t==="a"?"":"none";$("v-notes").style.display=t==="n"?"":"none";
   $("t-apps").classList.toggle("on",t==="a");$("t-notes").classList.toggle("on",t==="n");
@@ -338,7 +435,7 @@ let prof=null,asked=false;
 function drawTitle(){const n=prof&&prof.name;$("ttl").textContent=n?n+"'s Hub":"My Hub";document.title=$("ttl").textContent}
 function openName(){$("pn").value=(prof&&prof.name)||"";$("ovP").classList.add("show")}
 $("ren").onclick=openName;
-$("ps").onclick=()=>err(async()=>{if(!db)return;await db.doc("settings/profile").set({name:$("pn").value.trim()});$("ovP").classList.remove("show")});
+$("ps").onclick=()=>err(async()=>{if(!db)return;await db.doc("settings/profile").set({...(prof||{}),name:$("pn").value.trim()});$("ovP").classList.remove("show")});
 $("pk").onclick=()=>err(async()=>{if(db&&!prof)await db.doc("settings/profile").set({name:"",skipped:true});$("ovP").classList.remove("show")});
 $("lc").append(...CATS.map(c=>E("option",{value:c[0],text:c[1]})));
 drawChips();drawLinks();drawNChips();drawNotes();setTab("a");
@@ -359,7 +456,7 @@ db={collection:n=>rows(n==="links"?"link":"note"),doc:()=>({
 assets={upload:async f=>{const ext=((f.name.split(".").pop())||"jpg").replace(/[^a-z0-9]/gi,"");const path=uid+"/"+crypto.randomUUID()+"."+ext;const r=await sb.storage.from("hub-images").upload(path,f,{contentType:f.type});if(r.error)throw r.error;return{id:path}}};
 function start(){
   $("ovA").classList.remove("show");
-  db.doc().onSnapshot(d=>{prof=d.exists?d.data():null;drawTitle();if(!d.exists&&!asked){asked=true;openName()}});
+  db.doc().onSnapshot(d=>{prof=d.exists?d.data():null;drawTitle();drawNotes();if(!d.exists&&!asked){asked=true;openName()}});
   db.collection("links").onSnapshot(s=>{links=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.ts||0)-(b.ts||0));drawLinks()});
   db.collection("notes").onSnapshot(s=>{notes=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.ts||0)-(a.ts||0));drawNotes()});
   sb.channel("hub").on("postgres_changes",{event:"*",schema:"public",table:"hub_items"},pull).subscribe();
