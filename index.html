@@ -104,7 +104,7 @@ textarea{min-height:110px}
     <div class="chips" id="nchips"></div>
     <div id="nlist"></div>
   </div>
-  <div style="text-align:center"><button class="btn" id="out" style="font-size:12px;padding:4px 12px;color:var(--mut)">Sign out</button></div>
+  <div style="text-align:center"><button class="btn" id="bk" style="font-size:12px;padding:4px 12px;color:var(--mut)">Backup</button> <button class="btn" id="out" style="font-size:12px;padding:4px 12px;color:var(--mut)">Sign out</button></div>
   <div id="warn" class="msg" style="display:none">Could not connect. Check the Supabase URL and key in index.html.</div>
 </div>
 
@@ -159,6 +159,23 @@ textarea{min-height:110px}
 </div></div>
 
 <div class="ov" id="ovK" style="align-items:center"><div class="box" style="border-radius:24px;margin:14px"><h2 id="kt" style="margin:0;font-size:18px"></h2><div id="kb"></div></div></div>
+
+<div class="ov" id="ovB"><div class="box">
+  <h2 style="margin:0;font-size:18px">Backup</h2>
+  <label>File backup (JSON, includes images)</label>
+  <div class="row"><button class="btn pri" id="bx">Export</button><button class="btn" id="bi">Import...</button></div>
+  <input type="file" id="bf" accept="application/json,.json" style="display:none">
+  <label>When importing</label>
+  <select id="bm">
+    <option value="merge">Merge: add items that are missing</option>
+    <option value="replace">Replace everything with the file</option>
+  </select>
+  <label>Snapshots in Supabase (automatic once a day, keeps the latest 30)</label>
+  <div class="row"><button class="btn" id="bs">Snapshot now</button></div>
+  <div id="bl" style="margin-top:10px"></div>
+  <div id="bmsg" style="color:var(--mut);font-size:13px;margin-top:10px;min-height:18px;overflow-wrap:anywhere"></div>
+  <div class="row" style="margin-top:14px"><span style="flex:1"></span><button class="btn" id="bc">Close</button></div>
+</div></div>
 
 <div class="ov" id="ovI" style="align-items:center"><img id="big" alt=""></div>
 
@@ -406,7 +423,7 @@ $("ls").onclick=()=>err(async()=>{
   await (editL?db.collection("links").doc(editL.id).set(d):db.collection("links").add(d));
   $("ovL").classList.remove("show");
 });
-$("ldel").onclick=()=>err(async()=>{if(editL&&confirm("Delete \""+editL.name+"\"?")){await db.collection("links").doc(editL.id).delete();$("ovL").classList.remove("show")}});
+$("ldel").onclick=()=>err(async()=>{if(editL&&confirm("Delete \""+editL.name+"\"?")){await preDel();await db.collection("links").doc(editL.id).delete();$("ovL").classList.remove("show")}});
 $("lx").onclick=()=>$("ovL").classList.remove("show");
 $("nf").onchange=()=>err(async()=>{
   if(!assets){alert("Image upload is not available in this view.");return}
@@ -421,7 +438,7 @@ $("ns").onclick=()=>err(async()=>{
   await (editN?db.collection("notes").doc(editN.id).set(d):db.collection("notes").add(d));
   $("ovN").classList.remove("show");
 });
-$("ndel").onclick=()=>err(async()=>{if(editN&&confirm("Delete this note?")){await db.collection("notes").doc(editN.id).delete();$("ovN").classList.remove("show")}});
+$("ndel").onclick=()=>err(async()=>{if(editN&&confirm("Delete this note?")){await preDel();await db.collection("notes").doc(editN.id).delete();$("ovN").classList.remove("show")}});
 $("nc").onclick=()=>$("ovN").classList.remove("show");
 $("ovI").onclick=()=>$("ovI").classList.remove("show");
 $("q").oninput=drawLinks;
@@ -446,7 +463,7 @@ const SUPABASE_URL="https://mbyubvpomeobsfwlfhoa.supabase.co",SUPABASE_KEY="sb_p
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 let uid=null;const subs=[],urls=new Map();
 const sign=id=>{if(!urls.has(id))urls.set(id,sb.storage.from("hub-images").createSignedUrl(id,3600).then(r=>(r.data&&r.data.signedUrl)||""));return urls.get(id)};
-async function pull(){const r=await sb.from("hub_items").select("*");if(r.error){console.error(r.error);$("warn").style.display="";return}subs.forEach(f=>f(r.data))}
+async function pull(){const r=await sb.from("hub_items").select("*");if(r.error){console.error(r.error);$("warn").style.display="";return}allRows=r.data;subs.forEach(f=>f(r.data))}
 const ok=async r=>{r=await r;if(r.error)throw r.error;pull()};
 const T=()=>sb.from("hub_items");
 const rows=kind=>({add:d=>ok(T().insert({kind,data:d})),doc:id=>({set:d=>ok(T().update({data:d}).eq("id",id)),delete:()=>ok(T().delete().eq("id",id))}),onSnapshot:cb=>subs.push(r=>cb({docs:r.filter(x=>x.kind===kind).map(x=>({id:x.id,...{data:()=>x.data}}))}))});
@@ -454,13 +471,161 @@ db={collection:n=>rows(n==="links"?"link":"note"),doc:()=>({
   onSnapshot:cb=>subs.push(r=>{const x=r.find(y=>y.kind==="profile");cb({exists:!!x,data:()=>x&&x.data})}),
   set:async d=>{const q=await T().select("id").eq("kind","profile");const id=q.data&&q.data[0]&&q.data[0].id;await ok(id?T().update({data:d}).eq("id",id):T().insert({kind:"profile",data:d}))}})};
 assets={upload:async f=>{const ext=((f.name.split(".").pop())||"jpg").replace(/[^a-z0-9]/gi,"");const path=uid+"/"+crypto.randomUUID()+"."+ext;const r=await sb.storage.from("hub-images").upload(path,f,{contentType:f.type});if(r.error)throw r.error;return{id:path}}};
+/* ===== Backup: JSON export/import (with images) + Supabase snapshots ===== */
+const BK="hub_backups",IMGB="hub-images",KEEP=30;
+let allRows=[],bkBusy=false,lastDelSnap=0;
+const stamp=()=>{const d=new Date(),p=n=>String(n).padStart(2,"0");return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+"-"+p(d.getHours())+p(d.getMinutes())};
+const slim=r=>r.map(x=>({id:x.id,kind:x.kind,data:x.data}));
+const fetchAll=async()=>{const r=await sb.from("hub_items").select("*");if(r.error)throw r.error;return r.data||[]};
+const imgPaths=r=>[...new Set(r.filter(x=>x.kind==="note").flatMap(x=>(x.data&&x.data.imgs)||[]))];
+const blobB64=bl=>new Promise((res,rej)=>{const f=new FileReader();f.onload=()=>res(String(f.result).split(",")[1]||"");f.onerror=()=>rej(f.error);f.readAsDataURL(bl)});
+const hasImg=async p=>{const i=p.lastIndexOf("/");if(i<0)return false;const nm=p.slice(i+1),r=await sb.storage.from(IMGB).list(p.slice(0,i),{search:nm,limit:5});return !r.error&&(r.data||[]).some(o=>o.name===nm)};
+
+async function insertItems(items){
+  const ins=items.map(x=>({kind:x.kind,data:x.data}));
+  for(let i=0;i<ins.length;i+=100){const r=await T().insert(ins.slice(i,i+100));if(r.error)throw r.error}
+}
+async function replaceAll(items){
+  const old=(await fetchAll()).map(x=>x.id);
+  await insertItems(items);
+  for(let i=0;i<old.length;i+=100){const r=await T().delete().in("id",old.slice(i,i+100));if(r.error)throw r.error}
+  await pull();
+}
+
+async function exportJson(say){
+  const items=slim(await fetchAll()),paths=imgPaths(items),images={};let n=0,miss=0;
+  for(const p of paths){
+    say("Packing images "+(++n)+"/"+paths.length+"...");
+    const r=await sb.storage.from(IMGB).download(p);
+    if(r.error||!r.data){miss++;continue}
+    images[p]={type:r.data.type||"image/jpeg",b64:await blobB64(r.data)};
+  }
+  say("Creating file...");
+  const out={app:"my-hub",version:1,exported:new Date().toISOString(),items,images};
+  const name="my-hub-backup-"+stamp()+".json";
+  const blob=new Blob([JSON.stringify(out)],{type:"application/json"});
+  const info="Exported "+items.length+" items, "+(paths.length-miss)+" images"+(miss?" ("+miss+" images could not be downloaded)":"")+".";
+  try{
+    const f=new File([blob],name,{type:"application/json"});
+    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f]});return info}
+  }catch(e){if(e&&e.name==="AbortError")return"Cancelled."}
+  const a=E("a",{href:URL.createObjectURL(blob),download:name});
+  document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),30000);
+  return info;
+}
+async function importJson(file,mode,say){
+  let j;try{j=JSON.parse(await file.text())}catch(e){throw new Error("Cannot read this file (not valid JSON)")}
+  if(!j||j.app!=="my-hub"||!Array.isArray(j.items))throw new Error("This is not a My Hub backup file");
+  const cur=await fetchAll();
+  let items=j.items.filter(x=>x&&x.kind&&x.data);
+  if(mode==="replace"){
+    say("Saving a safety snapshot...");
+    try{await snapshot("before-import",slim(cur))}
+    catch(e){if(!confirm("Could not save a safety snapshot ("+((e&&e.message)||e)+"). Continue anyway?"))return"Cancelled."}
+  }else{
+    const sig=x=>x.kind+"|"+(x.data.ts||"")+"|"+(x.data.title||x.data.name||"");
+    const have=new Set(cur.map(sig)),hasProf=cur.some(y=>y.kind==="profile");
+    items=items.filter(x=>x.kind==="profile"?!hasProf:!have.has(sig(x)));
+  }
+  const imgs=j.images||{},map={},need=imgPaths(items);let n=0,miss=0;
+  for(const p of need){
+    say("Restoring images "+(++n)+"/"+need.length+"...");
+    if(await hasImg(p)){map[p]=p;continue}
+    const im=imgs[p];if(!im){miss++;continue}
+    const ext=((p.split(".").pop())||"jpg").replace(/[^a-z0-9]/gi,"")||"jpg",ty=im.type||"image/jpeg";
+    const np=uid+"/"+crypto.randomUUID()+"."+ext;
+    const r=await sb.storage.from(IMGB).upload(np,new Blob([unb64(im.b64)],{type:ty}),{contentType:ty});
+    if(r.error)throw r.error;
+    map[p]=np;
+  }
+  items=items.map(x=>x.kind==="note"&&x.data.imgs&&x.data.imgs.length?{...x,data:{...x.data,imgs:x.data.imgs.map(p=>map[p]||p)}}:x);
+  say("Writing data...");
+  if(mode==="replace")await replaceAll(items);else{await insertItems(items);await pull()}
+  return (mode==="replace"?"Replaced everything: ":"Merged: ")+items.length+" items "+(mode==="replace"?"restored":"added")+(need.length?", "+(need.length-miss)+" images":"")+(miss?" ("+miss+" images missing from the file)":"")+".";
+}
+
+async function prune(){
+  const r=await sb.from(BK).select("id").order("created_at",{ascending:false});
+  if(r.error)return;
+  const old=(r.data||[]).slice(KEEP).map(x=>x.id);
+  if(old.length)await sb.from(BK).delete().in("id",old);
+}
+async function snapshot(label,items){
+  items=items||slim(await fetchAll());
+  const r=await sb.from(BK).insert({label,item_count:items.length,data:items});
+  if(r.error)throw r.error;
+  prune();
+}
+async function listSnaps(){
+  const r=await sb.from(BK).select("id,created_at,label,item_count").order("created_at",{ascending:false});
+  if(r.error)throw r.error;
+  return r.data||[];
+}
+async function restoreSnap(id){
+  const r=await sb.from(BK).select("data").eq("id",id).single();
+  if(r.error)throw r.error;
+  await snapshot("before-restore");
+  await replaceAll(r.data.data);
+}
+async function autoSnap(){
+  try{
+    if(!allRows.length)return;
+    const r=await sb.from(BK).select("created_at").order("created_at",{ascending:false}).limit(1);
+    if(r.error)return;
+    const last=r.data[0]&&Date.parse(r.data[0].created_at);
+    if(last&&Date.now()-last<864e5)return;
+    await snapshot("auto",slim(allRows));
+  }catch(e){console.warn("auto snapshot",e)}
+}
+async function preDel(){
+  try{if(allRows.length&&Date.now()-lastDelSnap>18e5){lastDelSnap=Date.now();await snapshot("before-delete",slim(allRows))}}catch(e){console.warn("pre-delete snapshot",e)}
+}
+
+const bmsg=t=>{$("bmsg").textContent=t||""};
+const BKB=["bx","bi","bs"];
+async function bk(fn){
+  if(bkBusy)return;bkBusy=true;BKB.forEach(i=>$(i).disabled=true);
+  try{await fn()}
+  catch(e){const m=(e&&e.message)||String(e);bmsg("Error: "+m+(/hub_backups|relation|schema cache|does not exist/i.test(m)?" (Create the hub_backups table first by running the SQL in Supabase.)":""))}
+  finally{bkBusy=false;BKB.forEach(i=>$(i).disabled=false)}
+}
+async function drawSnaps(){
+  const L=$("bl");L.replaceChildren();
+  let s;
+  try{s=await listSnaps()}catch(e){L.append(E("div",{class:"msg",style:"padding:12px",text:"Snapshots unavailable. Create the hub_backups table first."}));return}
+  if(!s.length){L.append(E("div",{class:"msg",style:"padding:12px",text:"No snapshots yet"}));return}
+  s.forEach(x=>L.append(E("div",{class:"fold",style:"cursor:default;flex-wrap:wrap;margin-bottom:8px"},
+    E("b",{text:new Date(x.created_at).toLocaleString("en-GB")}),
+    E("span",{class:"n",text:(x.label||"")+" · "+(x.item_count==null?"":x.item_count)}),
+    E("button",{class:"btn",type:"button",text:"Restore",style:"padding:3px 10px;font-size:12px",onclick:()=>bk(async()=>{
+      if(!confirm("Restore this snapshot? Current data will be replaced (a safety snapshot is saved first)."))return;
+      bmsg("Restoring...");await restoreSnap(x.id);bmsg("Snapshot restored.");await drawSnaps();
+    })}),
+    E("button",{class:"btn del",type:"button","aria-label":"Delete snapshot",text:"✕",style:"padding:3px 10px;font-size:12px",onclick:()=>bk(async()=>{
+      if(!confirm("Delete this snapshot?"))return;
+      const r=await sb.from(BK).delete().eq("id",x.id);if(r.error)throw r.error;
+      bmsg("Snapshot deleted.");await drawSnaps();
+    })}))));
+}
+$("bk").onclick=()=>{bmsg("");$("ovB").classList.add("show");drawSnaps()};
+$("bc").onclick=()=>$("ovB").classList.remove("show");
+$("bx").onclick=()=>bk(async()=>{bmsg("Preparing...");bmsg(await exportJson(bmsg))});
+$("bi").onclick=()=>$("bf").click();
+$("bf").onchange=()=>bk(async()=>{
+  const f=$("bf").files[0];$("bf").value="";if(!f)return;
+  const mode=$("bm").value;
+  if(mode==="replace"&&!confirm("Replace ALL current data with the contents of this file?"))return;
+  bmsg("Reading file...");bmsg(await importJson(f,mode,bmsg));await drawSnaps();
+});
+$("bs").onclick=()=>bk(async()=>{bmsg("Saving snapshot...");await snapshot("manual",slim(await fetchAll()));bmsg("Snapshot saved.");await drawSnaps()});
+
 function start(){
   $("ovA").classList.remove("show");
   db.doc().onSnapshot(d=>{prof=d.exists?d.data():null;drawTitle();drawNotes();if(!d.exists&&!asked){asked=true;openName()}});
   db.collection("links").onSnapshot(s=>{links=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.ts||0)-(b.ts||0));drawLinks()});
   db.collection("notes").onSnapshot(s=>{notes=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.ts||0)-(a.ts||0));drawNotes()});
   sb.channel("hub").on("postgres_changes",{event:"*",schema:"public",table:"hub_items"},pull).subscribe();
-  pull();
+  pull().then(autoSnap);
 }
 $("ain").onclick=async()=>{
   const r=await sb.auth.signInWithPassword({email:$("ae").value.trim(),password:$("ap").value});
